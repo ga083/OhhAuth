@@ -67,7 +67,9 @@ open class OhhAuth
     /// - Returns: correctly percentage encoded url-form parameters
     open static func httpBody(forFormParameters paras: [(key: String, value: String)],
                               encoding: String.Encoding = .utf8) -> Data? {
-        let trans: (Tup) -> String = { k, v in
+        let trans: (Tup) -> String = { (arg) -> String in
+            
+            let (k, v) = arg
             return rfc3986encode(k) + "=" + rfc3986encode(v)
         }
         
