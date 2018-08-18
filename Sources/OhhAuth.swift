@@ -25,12 +25,14 @@ import Foundation
 
 open class OhhAuth
 {
+    typealias Tup = (key: String, value: String)
+    
     /// Tuple to represent signing credentials. (consumer as well as user credentials)
     public typealias Credentials = (key: String, secret: String)
     
     
     /// Function to calculate the OAuth protocol parameters and signature ready to be added
-    /// as the HTTP header "Authorization" entry. A detailed explanation of the procedure 
+    /// as the HTTP header "Authorization" entry. A detailed explanation of the procedure
     /// can be found at: [RFC-5849 Section 3](https://tools.ietf.org/html/rfc5849#section-3)
     ///
     /// - Parameters:
@@ -42,10 +44,51 @@ open class OhhAuth
     ///
     /// - Returns: OAuth HTTP header entry for the Authorization field.
     open static func calculateSignature(url: URL, method: String, parameter: [String: String],
-        consumerCredentials cc: Credentials, userCredentials uc: Credentials?) -> String
+                                        consumerCredentials cc: Credentials, userCredentials uc: Credentials?) -> String
     {
-        typealias Tup = (key: String, value: String)
+        let toBrackyPairString: (Tup) -> String = {
+            return $0.key + "=\"" + $0.value + "\""
+        }
         
+        let oAuthParameters = generateOauthParameters(url: url, method: method, parameter: parameter, consumerCredentials: cc, userCredentials: uc)
+        
+        /// [RFC-5849 Section 3.5.1](https://tools.ietf.org/html/rfc5849#section-3.5.1)
+        return "OAuth " + oAuthParameters
+            .map(toBrackyPairString)
+            .joined(separator: ",")
+    }
+    
+    
+    
+    /// Function to perform the right percentage encoding for url form parameters.
+    ///
+    /// - Parameter paras: url-form parameters
+    /// - Parameter encoding: used string encoding (default: .utf8)
+    /// - Returns: correctly percentage encoded url-form parameters
+    open static func httpBody(forFormParameters paras: [(key: String, value: String)],
+                              encoding: String.Encoding = .utf8) -> Data? {
+        let trans: (Tup) -> String = { k, v in
+            return rfc3986encode(k) + "=" + rfc3986encode(v)
+        }
+        
+        return paras.map(trans).joined(separator: "&").data(using: encoding)
+    }
+    
+    /// Function to calculate the OAuth protocol parameters
+    ///
+    /// - Parameters:
+    ///   - url: Request url (with all query parameters etc.)
+    ///   - method: HTTP method
+    ///   - parameter: url-form parameters
+    ///   - consumerCredentials: consumer credentials
+    ///   - userCredentials: user credentials (nil if this is a request without user association)
+    ///
+    /// - Returns: An ordered Tup array with each oauth parameter.
+    fileprivate static func generateOauthParameters(url: URL, method: String,
+                                                    parameter: [String: String],
+                                                    consumerCredentials cc: Credentials,
+                                                    userCredentials uc: Credentials?) -> [Tup]
+    {
         let tuplify: (String, String) -> Tup = {
             return (key: rfc3986encode($0), value: rfc3986encode($1))
         }
@@ -55,10 +98,6 @@ open class OhhAuth
         let toPairString: (Tup) -> String = {
             return $0.key + "=" + $0.value
         }
-        let toBrackyPairString: (Tup) -> String = {
-            return $0.key + "=\"" + $0.value + "\""
-        }
-        
         /// [RFC-5849 Section 3.1](https://tools.ietf.org/html/rfc5849#section-3.1)
         var oAuthParameters = oAuthDefaultParameters(consumerKey: cc.key, userKey: uc?.key)
         
@@ -84,35 +123,16 @@ open class OhhAuth
         let binarySignature = HMAC.calculate(withHash: .sha1, key: signingKey, message: signatureBase)
         oAuthParameters["oauth_signature"] = binarySignature.base64EncodedString()
         
-        /// [RFC-5849 Section 3.5.1](https://tools.ietf.org/html/rfc5849#section-3.5.1)
-        return "OAuth " + oAuthParameters
-            .map(tuplify)
-            .sorted(by: cmp)
-            .map(toBrackyPairString)
-            .joined(separator: ",")
-    }
-    
-
-    
-    /// Function to perform the right percentage encoding for url form parameters.
-    ///
-    /// - Parameter paras: url-form parameters
-    /// - Parameter encoding: used string encoding (default: .utf8)
-    /// - Returns: correctly percentage encoded url-form parameters
-    open static func httpBody(forFormParameters paras: [String: String], encoding: String.Encoding = .utf8) -> Data?
-    {
-        let trans: (String, String) -> String = { k, v in
-            return rfc3986encode(k) + "=" + rfc3986encode(v)
-        }
+        let sortedOauthParameters = oAuthParameters.sorted(by: cmp)
         
-        return paras.map(trans).joined(separator: "&").data(using: encoding)
+        return sortedOauthParameters
     }
     
-    /// OAuth cites RFC-3986 for percentage encoding. 
+    /// OAuth cites RFC-3986 for percentage encoding.
     /// Characters that don't need to be converted are: ALPHA, DIGIT, "-", ".", "_", "~"
     /// [RFC-5849 Section 3.6](https://tools.ietf.org/html/rfc5849#section-3.6)
     /// [RFC-3986 Section 2.3](https://tools.ietf.org/html/rfc3986#section-2.3)
-    /// Predefined CharacterSets are not used to be 100% RFC conform and 
+    /// Predefined CharacterSets are not used to be 100% RFC conform and
     /// avoid possible unicode conversion problems.
     private static func rfc3986encode(_ str: String) -> String
     {
@@ -133,7 +153,7 @@ open class OhhAuth
             /// [RFC-5849 Section 3.3](https://tools.ietf.org/html/rfc5849#section-3.3)
             "oauth_timestamp":        String(Int(Date().timeIntervalSince1970)),
             "oauth_nonce":            UUID().uuidString,
-        ]
+            ]
         if let userKey = userKey {
             defaults["oauth_token"] = userKey
         }
@@ -146,7 +166,7 @@ public extension URLRequest
 {
     /// Easy to use method to sign a URLRequest which includes url-form parameters with OAuth.
     /// The request needs a valid URL with all query parameters etc. included.
-    /// After calling this method the HTTP header fields: "Authorization", "Content-Type" 
+    /// After calling this method the HTTP header fields: "Authorization", "Content-Type"
     /// and "Content-Length" should not be overwritten.
     ///
     /// - Parameters:
@@ -154,21 +174,42 @@ public extension URLRequest
     ///   - paras: url-form parameters
     ///   - consumerCredentials: consumer credentials
     ///   - userCredentials: user credentials (nil if this is a request without user association)
+    ///   - signHeader: if true the signature will be placed at the 'authorization' header
+    ///   if false the oauth parameters will be placed as part of the url-form parameters
+    ///
+    /// [RFC-5849] Section 3.5.1](https://tools.ietf.org/html/rfc5849#section-3.5.1)
+    /// [RFC-5849] Section 3.5.2](https://tools.ietf.org/html/rfc5849#section-3.5.2)
     public mutating func oAuthSign(method: String, urlFormParameters paras: [String: String],
-        consumerCredentials cc: OhhAuth.Credentials, userCredentials uc: OhhAuth.Credentials? = nil)
+                                   consumerCredentials cc: OhhAuth.Credentials, userCredentials uc: OhhAuth.Credentials? = nil,
+                                   signAuthorizationHeader: Bool = true)
     {
         self.httpMethod = method.uppercased()
         
-        let body = OhhAuth.httpBody(forFormParameters: paras)
+        var orderedParas = paras.sorted {
+            $0.key < $1.key
+        }
         
+        if signAuthorizationHeader {
+            let sig = OhhAuth.calculateSignature(url: self.url!, method: self.httpMethod!,
+                                                 parameter: paras, consumerCredentials: cc, userCredentials: uc)
+            
+            self.addValue(sig, forHTTPHeaderField: "Authorization")
+        } else {
+            let oauthParameters = OhhAuth.generateOauthParameters(url: self.url!,
+                                                                  method: self.httpMethod!,
+                                                                  parameter: paras,
+                                                                  consumerCredentials: cc,
+                                                                  userCredentials: uc)
+            
+            orderedParas.append(contentsOf: oauthParameters)
+        }
+        
+        let body = OhhAuth.httpBody(forFormParameters: orderedParas)
         self.httpBody = body
+        
         self.addValue(String(body?.count ?? 0), forHTTPHeaderField: "Content-Length")
         self.addValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
         
-        let sig = OhhAuth.calculateSignature(url: self.url!, method: self.httpMethod!,
-                      parameter: paras, consumerCredentials: cc, userCredentials: uc)
-        
-        self.addValue(sig, forHTTPHeaderField: "Authorization")
     }
     
     /// Easy to use method to sign a URLRequest which includes plain body data with OAuth.
@@ -183,7 +224,7 @@ public extension URLRequest
     ///   - consumerCredentials: consumer credentials
     ///   - userCredentials: user credentials (nil if this is a request without user association)
     public mutating func oAuthSign(method: String, body: Data? = nil, contentType: String? = nil,
-        consumerCredentials cc: OhhAuth.Credentials, userCredentials uc: OhhAuth.Credentials? = nil)
+                                   consumerCredentials cc: OhhAuth.Credentials, userCredentials uc: OhhAuth.Credentials? = nil)
     {
         self.httpMethod = method.uppercased()
         
@@ -197,7 +238,7 @@ public extension URLRequest
         }
         
         let sig = OhhAuth.calculateSignature(url: self.url!, method: self.httpMethod!,
-                      parameter: [:], consumerCredentials: cc, userCredentials: uc)
+                                             parameter: [:], consumerCredentials: cc, userCredentials: uc)
         
         self.addValue(sig, forHTTPHeaderField: "Authorization")
     }
@@ -215,12 +256,12 @@ fileprivate class HMAC
         
         var length: Int {
             switch self {
-                case .md5:     return 16
-                case .sha1:    return 20
-                case .sha224:  return 28
-                case .sha256:  return 32
-                case .sha384:  return 48
-                case .sha512:  return 64
+            case .md5:     return 16
+            case .sha1:    return 20
+            case .sha224:  return 28
+            case .sha256:  return 32
+            case .sha384:  return 48
+            case .sha512:  return 64
             }
         }
     }
@@ -253,7 +294,7 @@ fileprivate class HMAC
         _ data:       UnsafePointer<CUnsignedChar>,
         _ dataLength: CUnsignedLong,
         _ macOut:     UnsafeMutablePointer<CUnsignedChar>
-    ) -> Void
+        ) -> Void
     
     /// Just a `import CommonCrypto` would be great, but unfortunately this is still not possible.
     /// So we use the only other sane method at this time to get access to CommonCrypto.
@@ -307,5 +348,11 @@ fileprivate extension URL
     }
 }
 
-
+fileprivate extension Dictionary {
+    mutating func merge(dict: [Key: Value]){
+        for (k, v) in dict {
+            updateValue(v, forKey: k)
+        }
+    }
+}
 
