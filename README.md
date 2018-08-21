@@ -1,3 +1,6 @@
+## Note
+This is a Fork of "mw99 / OhhAuth" which adds [RFC5849 support for section 3.5.2](https://tools.ietf.org/html/rfc5849#section-3.5.2). 
+
 # OhhAuth
 ### Pure Swift implementation of the OAuth 1.0 protocol as an easy to use extension for the URLRequest type. [(RFC-5849)](https://tools.ietf.org/html/rfc5849])
 
